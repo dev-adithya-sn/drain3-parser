@@ -462,17 +462,69 @@ def _enrich_from_json(event: SecurityEvent, log: str) -> None:
 SAMPLE_RECORDS = 500
 
 
+# ── Multi-line log joiner ─────────────────────────────────────────────────────
+
+_ENTRY_START = re.compile(
+    r"^(?:"
+    r"\d{4}-\d{2}-\d{2}[T ]"           # ISO timestamp
+    r"|[A-Z][a-z]{2} \d{1,2} \d{2}:"   # syslog (Jan 15 10:)
+    r"|\d{2}-\d{2} \d{2}:\d{2}:"       # Android (03-17 16:13:)
+    r"|\d{6} \d{6}"                     # HDFS (081109 203615)
+    r"|<\d+>"                           # syslog priority (<134>)
+    r"|\{\"timestamp"                   # JSON logs
+    r'|\{"@timestamp'
+    r'|\{"time"'
+    r"|CEF:"                            # CEF format
+    r"|\d+\.\d+\.\d+\.\d+ - "          # access logs (IP - user)
+    r"|\d+\.\d+\.\d+\.\d+ \d+\.\d+\.\d+\.\d+"  # firewall (src dst)
+    r")"
+)
+
+
+def join_multiline(lines: Iterable[str]) -> Iterable[str]:
+    """
+    Join multi-line log entries into single lines.
+
+    A new entry starts when a line matches a known log-start pattern
+    (timestamp, JSON, CEF, IP prefix, etc.). Everything else is a
+    continuation of the previous entry, joined with " | ".
+
+    This handles:
+    - Java/Python stack traces
+    - Multi-line error messages
+    - Wrapped syslog entries
+    - Any log where continuation lines lack a timestamp
+    """
+    buffer = ""
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if not line.strip():
+            continue
+        if _ENTRY_START.match(line):
+            if buffer:
+                yield buffer
+            buffer = line
+        else:
+            buffer += " | " + line.strip()
+    if buffer:
+        yield buffer
+
+
 class SecurityParser(LogParser):
     """
     Universal security log field extractor.
     
     Field extraction: regex pipeline (WHO/WHAT/WHERE/WHEN/HOW).
     Clustering: drain3 under the hood (similarity-based, not exact-match).
+    Multi-line: continuation lines joined before parsing.
     """
     name = "security"
 
     def parse(self, lines: Iterable[str],
               sample_limit: int = SAMPLE_RECORDS) -> ParseResult:
+
+        # join multi-line entries (stack traces, wrapped messages)
+        lines = join_multiline(lines)
 
         # use drain3 for clustering — it handles similarity-based merging
         import os
