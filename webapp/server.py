@@ -26,7 +26,7 @@ STATIC = Path(__file__).parent / "static"
 # cap per-line records shipped to the browser; stats/clusters stay complete
 RECORD_LIMIT = 500
 # refuse absurdly large uploads (bytes)
-MAX_UPLOAD = 50 * 1024 * 1024
+MAX_UPLOAD = 500 * 1024 * 1024
 
 
 @app.get("/", response_class=HTMLResponse)
