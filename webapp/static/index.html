@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drain3 · log parser</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+  :root {
+    --bg:        #0a0c10;
+    --panel:     #11141b;
+    --panel-2:   #161a23;
+    --border:    #232934;
+    --border-lit:#323b4a;
+    --text:      #d4dae3;
+    --dim:       #6b7689;
+    --accent:    #4d9fff;
+    --accent-dk: #1d3a5f;
+    --green:     #46d17e;
+    --amber:     #ffb454;
+    --red:       #ff6b6b;
+    --mark-bg:   #3a2705;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background:
+      radial-gradient(900px 500px at 80% -10%, #14213a55, transparent),
+      var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.55;
+    padding: 2.2rem 1.6rem 4rem;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* ── header ─────────────────────────────────────────── */
+  header {
+    display: flex; align-items: baseline; gap: .8rem;
+    margin-bottom: .35rem;
+  }
+  .logo {
+    font-size: 1.55rem; font-weight: 800; letter-spacing: -.03em;
+    color: #fff;
+  }
+  .logo .br { color: var(--accent); }
+  .tag { color: var(--dim); font-size: .82rem; }
+  .sub { color: var(--dim); font-size: .8rem; margin-bottom: 1.8rem; }
+  .sub code {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: .05rem .35rem; color: var(--accent);
+  }
+
+  /* ── control bar ────────────────────────────────────── */
+  .controls {
+    display: flex; gap: .7rem; align-items: center; flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .pill {
+    display: flex; align-items: center; gap: .45rem;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 7px; padding: .4rem .7rem; font-size: .78rem;
+  }
+  .pill label { color: var(--dim); }
+  select {
+    background: transparent; color: var(--text); border: none;
+    font-family: inherit; font-size: .78rem; font-weight: 600;
+    cursor: pointer; outline: none;
+  }
+  select option { background: var(--panel-2); }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 8px var(--green);
+  }
+
+  /* ── drop zone ──────────────────────────────────────── */
+  .drop {
+    border: 1.5px dashed var(--border-lit); border-radius: 12px;
+    background: var(--panel);
+    padding: 2.6rem 1.5rem; text-align: center;
+    cursor: pointer; transition: all .18s ease;
+    position: relative;
+  }
+  .drop:hover { border-color: var(--accent); background: var(--panel-2); }
+  .drop.drag {
+    border-color: var(--accent); background: var(--accent-dk);
+    transform: scale(1.005);
+  }
+  .drop .ico {
+    font-size: 2rem; color: var(--accent); margin-bottom: .5rem;
+    font-weight: 800;
+  }
+  .drop .big { font-size: .95rem; color: var(--text); font-weight: 600; }
+  .drop .small { font-size: .76rem; color: var(--dim); margin-top: .25rem; }
+  .drop .fname { color: var(--amber); font-weight: 700; }
+  #fileInput { display: none; }
+
+  .actions { display: flex; gap: .7rem; margin-top: 1rem; }
+  button {
+    font-family: inherit; font-size: .82rem; font-weight: 700;
+    border-radius: 8px; padding: .6rem 1.2rem; cursor: pointer;
+    border: 1px solid var(--border-lit); background: var(--panel-2);
+    color: var(--text); transition: all .15s;
+  }
+  button.primary {
+    background: var(--accent); color: #06101f; border-color: var(--accent);
+  }
+  button.primary:hover { box-shadow: 0 0 16px #4d9fff66; }
+  button:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+
+  /* ── status / error ─────────────────────────────────── */
+  .status { margin-top: 1rem; font-size: .8rem; color: var(--dim); }
+  .status.err { color: var(--red); }
+  .spinner {
+    display: inline-block; width: 11px; height: 11px;
+    border: 2px solid var(--border-lit); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: middle; margin-right: .4rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── results ────────────────────────────────────────── */
+  #results { margin-top: 2rem; display: none; }
+  #results.show { display: block; }
+  .reveal { animation: rise .4s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+  .stats { display: flex; gap: .8rem; flex-wrap: wrap; margin-bottom: 1.6rem; }
+  .stat {
+    flex: 1; min-width: 130px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: .85rem 1rem;
+  }
+  .stat .v {
+    font-size: 1.6rem; font-weight: 800; color: #fff; letter-spacing: -.02em;
+  }
+  .stat .k {
+    font-size: .68rem; color: var(--dim); text-transform: uppercase;
+    letter-spacing: .09em; margin-top: .1rem;
+  }
+  .stat.accent .v { color: var(--accent); }
+
+  h2 {
+    font-size: .9rem; font-weight: 700; color: var(--text);
+    margin: 1.6rem 0 .7rem; display: flex; align-items: center; gap: .5rem;
+  }
+  h2::before { content: "▸"; color: var(--accent); }
+  h2 .note { font-weight: 400; color: var(--dim); font-size: .74rem; }
+
+  .tablewrap {
+    border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; background: var(--panel);
+  }
+  .scroll { max-height: 460px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+  thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--panel-2); color: var(--dim);
+    text-align: left; padding: .55rem .7rem; font-weight: 700;
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .07em;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: .4rem .7rem; border-bottom: 1px solid var(--border);
+    vertical-align: top; word-break: break-word;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--panel-2); }
+  .cid { color: var(--accent); text-align: right; white-space: nowrap; font-weight: 600; }
+  .n   { color: var(--dim);    text-align: right; white-space: nowrap; }
+  .tpl { color: var(--green); }
+  .prm { color: var(--amber); }
+  mark {
+    background: var(--mark-bg); color: var(--amber);
+    border-radius: 3px; padding: 0 2px; font-weight: 600;
+  }
+  .badge {
+    font-size: .62rem; font-weight: 700; padding: .08rem .35rem;
+    border-radius: 4px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .badge.new { background: #0e2b1a; color: var(--green); }
+  .badge.chg { background: #2e2206; color: var(--amber); }
+  .empty { color: var(--dim); }
+  footer { margin-top: 2.5rem; color: var(--dim); font-size: .72rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="logo">drain3<span class="br">//</span>parser</span>
+    <span class="tag">unsupervised log clustering</span>
+  </header>
+  <p class="sub">
+    Upload a log file — it's clustered, templated, and parameter-extracted.
+    Backend is pluggable: <code>drain3</code> today, <code>drain3 + LLM</code> when you add it.
+  </p>
+
+  <div class="controls">
+    <div class="pill">
+      <span class="dot"></span>
+      <label>backend</label>
+      <select id="backendSel"><option>drain3</option></select>
+    </div>
+    <div class="pill" id="activePill" style="display:none">
+      <label>active</label><span id="activeName">—</span>
+    </div>
+  </div>
+
+  <div class="drop" id="drop">
+    <div class="ico">⌖</div>
+    <div class="big" id="dropBig">Drop a log file here, or click to browse</div>
+    <div class="small" id="dropSmall">.log / .txt — one entry per line — up to 50 MB</div>
+    <input type="file" id="fileInput" accept=".log,.txt,text/plain">
+  </div>
+
+  <div class="actions">
+    <button class="primary" id="parseBtn" disabled>Parse</button>
+    <button id="resetBtn" disabled>Reset</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div id="results">
+    <div class="stats reveal" id="stats"></div>
+
+    <h2>Cluster Map <span class="note" id="clNote"></span></h2>
+    <div class="tablewrap reveal">
+      <div class="scroll">
+        <table>
+          <thead><tr><th style="width:60px">ID</th><th style="width:80px">Logs</th><th>Template</th></tr></thead>
+          <tbody id="clBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Raw → Parsed <span class="note" id="cmpNote"></span></h2>
+    <div class="tablewrap reveal">
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th style="width:50px">CID</th>
+            <th>Raw log <span style="color:var(--amber)">(highlight = masked)</span></th>
+            <th>Template</th>
+            <th style="width:160px">Parameters</th>
+            <th style="width:70px"></th>
+          </tr></thead>
+          <tbody id="cmpBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer>drain3 parser · stateless per-upload · backend swap → webapp/parsers/registry.py</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let chosenFile = null;
+
+// ── escape + token-diff highlight ────────────────────────────────
+function esc(s) {
+  return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function highlight(raw, template) {
+  const r = raw.split(/\s+/), t = template.split(/\s+/);
+  if (r.length === t.length) {
+    return r.map((tok, i) => tok !== t[i] ? `<mark>${esc(tok)}</mark>` : esc(tok)).join(' ');
+  }
+  // length mismatch (masking merged tokens): highlight tokens absent from template
+  const tset = new Set(t);
+  return r.map(tok => tset.has(tok) ? esc(tok) : `<mark>${esc(tok)}</mark>`).join(' ');
+}
+
+// ── load backends ────────────────────────────────────────────────
+fetch('/api/backends').then(r => r.json()).then(d => {
+  $('backendSel').innerHTML = d.available
+    .map(b => `<option${b === d.active ? ' selected' : ''}>${b}</option>`).join('');
+  $('activeName').textContent = d.active;
+  $('activePill').style.display = 'flex';
+}).catch(() => {});
+
+// ── drop zone wiring ─────────────────────────────────────────────
+const drop = $('drop'), input = $('fileInput');
+drop.onclick = () => input.click();
+input.onchange = () => input.files.length && setFile(input.files[0]);
+['dragover','dragenter'].forEach(e =>
+  drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('drag'); }));
+['dragleave','drop'].forEach(e =>
+  drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', ev => {
+  const f = ev.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+
+function setFile(f) {
+  chosenFile = f;
+  $('dropBig').innerHTML = `Selected: <span class="fname">${esc(f.name)}</span>`;
+  $('dropSmall').textContent = `${(f.size/1024).toFixed(1)} KB — ready to parse`;
+  $('parseBtn').disabled = false;
+  $('resetBtn').disabled = false;
+  $('status').textContent = '';
+  $('status').className = 'status';
+}
+
+// ── reset ────────────────────────────────────────────────────────
+$('resetBtn').onclick = () => {
+  chosenFile = null; input.value = '';
+  $('dropBig').textContent = 'Drop a log file here, or click to browse';
+  $('dropSmall').textContent = '.log / .txt — one entry per line — up to 50 MB';
+  $('parseBtn').disabled = true; $('resetBtn').disabled = true;
+  $('status').textContent = ''; $('status').className = 'status';
+  $('results').classList.remove('show');
+};
+
+// ── parse ────────────────────────────────────────────────────────
+$('parseBtn').onclick = async () => {
+  if (!chosenFile) return;
+  const fd = new FormData();
+  fd.append('file', chosenFile);
+  fd.append('backend', $('backendSel').value);
+
+  $('parseBtn').disabled = true;
+  $('status').className = 'status';
+  $('status').innerHTML = '<span class="spinner"></span>parsing…';
+
+  try {
+    const res = await fetch('/api/parse', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'parse failed');
+    render(data);
+    $('status').textContent = `done — parsed with "${data.backend}"`;
+  } catch (e) {
+    $('status').className = 'status err';
+    $('status').textContent = 'error: ' + e.message;
+  } finally {
+    $('parseBtn').disabled = false;
+  }
+};
+
+// ── render results ───────────────────────────────────────────────
+function render(d) {
+  const s = d.stats;
+  $('stats').innerHTML = `
+    <div class="stat"><div class="v">${s.lines.toLocaleString()}</div><div class="k">lines</div></div>
+    <div class="stat accent"><div class="v">${s.clusters}</div><div class="k">clusters</div></div>
+    <div class="stat"><div class="v">${s.params_extracted.toLocaleString()}</div><div class="k">params extracted</div></div>
+    <div class="stat"><div class="v">${s.new_clusters}</div><div class="k">new clusters</div></div>`;
+
+  $('clNote').textContent = `${d.clusters.length} total, by frequency`;
+  $('clBody').innerHTML = d.clusters.map(c => `
+    <tr><td class="cid">${c.cluster_id}</td>
+        <td class="n">${c.size.toLocaleString()}</td>
+        <td class="tpl">${esc(c.template)}</td></tr>`).join('');
+
+  const shown = d.records.length, total = d.records_total;
+  $('cmpNote').textContent = shown < total
+    ? `showing first ${shown} of ${total.toLocaleString()}` : `${total} lines`;
+  $('cmpBody').innerHTML = d.records.map(r => {
+    let badge = '';
+    if (r.change_type === 'new') badge = '<span class="badge new">new</span>';
+    else if (r.change_type === 'cluster_template_changed') badge = '<span class="badge chg">chg</span>';
+    const prm = r.parameters.length
+      ? `<span class="prm">${r.parameters.map(esc).join(', ')}</span>`
+      : '<span class="empty">—</span>';
+    return `<tr>
+      <td class="cid">${r.cluster_id}</td>
+      <td>${highlight(r.original_log, r.template)}</td>
+      <td class="tpl">${esc(r.template)}</td>
+      <td>${prm}</td>
+      <td>${badge}</td></tr>`;
+  }).join('');
+
+  $('results').classList.add('show');
+}
+</script>
+</body>
+</html>
