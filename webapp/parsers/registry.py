@@ -23,14 +23,21 @@ import os
 
 from .base import LogParser
 from .drain3_parser import Drain3Parser
-# from .drain3_llm_parser import Drain3LLMParser   # <- future backend
+from .security_parser import SecurityParser
 
 _REGISTRY: dict[str, type[LogParser]] = {
-    "drain3": Drain3Parser,
-    # "drain3_llm": Drain3LLMParser,                # <- register it here
+    "drain3":   Drain3Parser,
+    "security": SecurityParser,
 }
 
-DEFAULT_BACKEND = "drain3"
+# NuLog requires torch — register only if available
+try:
+    from .nulog_parser import NuLogParser
+    _REGISTRY["nulog"] = NuLogParser
+except ImportError:
+    pass  # torch not installed; nulog backend unavailable
+
+DEFAULT_BACKEND = "security"
 
 
 def available_backends() -> list[str]:
