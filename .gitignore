@@ -7,10 +7,7 @@ loghub/
 loghub_out/
 loghub_state/
 *.jsonl
-
-.DS_Store
-*.txt
-*.html
+drain3_report.html
 
 .DS_Store
 *.txt
