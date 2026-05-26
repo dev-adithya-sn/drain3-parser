@@ -37,6 +37,14 @@ try:
 except ImportError:
     pass  # torch not installed; nulog backend unavailable
 
+# Vector requires the vector binary on PATH
+try:
+    from .vector_parser import VectorParser, _check_vector
+    if _check_vector():
+        _REGISTRY["vector"] = VectorParser
+except ImportError:
+    pass  # vector_parser import failed
+
 DEFAULT_BACKEND = "security"
 
 

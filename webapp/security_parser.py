@@ -83,34 +83,52 @@ class SecurityEvent:
     threats:       list[str] = field(default_factory=list)
 
     def to_summary(self) -> list[str]:
-        """Flat labeled list for display in the UI parameters column."""
+        """Flat labeled list matching the universal security schema."""
         out = []
+        # maps SecurityEvent attr → universal_schema.yml field name
         LABELS = {
-            "timestamp": "when", "source_user": "who:src_user",
-            "target_user": "who:tgt_user", "user_role": "who:role",
-            "user_agent": "who:agent",
-            "action": "what:action", "event_type": "what:type",
-            "status": "what:status", "severity": "what:severity",
-            "error_code": "what:error", "message": "what:msg",
-            "source_ip": "from:ip", "source_port": "from:port",
-            "source_host": "from:host", "source_mac": "from:mac",
-            "dest_ip": "to:ip", "dest_port": "to:port",
-            "dest_host": "to:host", "dest_mac": "to:mac",
-            "protocol": "how:proto", "http_method": "how:method",
-            "http_status": "how:status", "http_path": "how:path",
-            "resource": "target:resource", "file_path": "target:file",
-            "url": "target:url", "service": "target:service",
-            "process": "target:process", "pid": "target:pid",
-            "database": "target:db", "registry_key": "target:regkey",
-            "bytes_in": "ctx:bytes_in", "bytes_out": "ctx:bytes_out",
-            "duration": "ctx:duration", "session_id": "ctx:session",
-            "request_id": "ctx:request_id", "trace_id": "ctx:trace",
-            "region": "ctx:region",
+            "timestamp":    "timestamp",
+            "severity":     "log_level",
+            "event_type":   "event_type",
+            "action":       "action",
+            "source_user":  "who_user",
+            "process":      "who_process",
+            "pid":          "who_userid",
+            "source_host":  "src_machine",
+            "dest_host":    "dst_machine",
+            "status":       "status",
+            "source_mac":   "src_mac",
+            "dest_mac":     "dst_mac",
+            "source_ip":    "src_ip",
+            "dest_ip":      "dst_ip",
+            "source_port":  "src_port",
+            "dest_port":    "dst_port",
+            "protocol":     "protocol",
+            "target_user":  "to_user",
+            "resource":     "resource",
+            "file_path":    "resource",
+            "url":          "resource",
+            "service":      "resource",
+            "user_agent":   "who_user_agent",
+            "http_method":  "action",
+            "http_status":  "status",
+            "http_path":    "resource",
+            "region":       "region",
+            "session_id":   "session_id",
+            "request_id":   "request_id",
+            "trace_id":     "trace_id",
+            "bytes_in":     "bytes_in",
+            "bytes_out":    "bytes_out",
+            "duration":     "duration",
         }
+        seen = set()
         for attr, label in LABELS.items():
             val = getattr(self, attr)
             if val:
-                out.append(f"{label}={val}")
+                key = f"{label}={val}"
+                if key not in seen:
+                    out.append(key)
+                    seen.add(key)
         for ip in self.other_ips:
             out.append(f"ip={ip}")
         for h in self.other_hosts:
