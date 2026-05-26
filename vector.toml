@@ -1,0 +1,172 @@
+# vector.toml — log parsing pipeline for the universal security schema
+#
+# Usage:
+#   vector --config vector.toml                   (production: stdin → stdout)
+#   vector vrl --input /tmp/logs.jsonl vector.vrl  (dev: test VRL on a file)
+#
+# This config reads raw log lines, parses them with VRL into the universal
+# schema, and outputs structured JSON. In production, swap stdin/stdout
+# for Redpanda source / ClickHouse sink.
+
+[sources.raw_logs]
+type = "stdin"
+decoding.codec = "bytes"
+
+[transforms.parse]
+type = "remap"
+inputs = ["raw_logs"]
+source = """
+# ── preserve original ────────────────────────────────────────
+.raw = string!(.message)
+line = string!(.message)
+
+# ── initialise universal schema fields ───────────────────────
+.timestamp    = null
+.log_level    = null
+.event_type   = null
+.action       = null
+.who_user     = null
+.who_userid   = null
+.who_process  = null
+.src_machine  = null
+.dst_machine  = null
+.status       = null
+.src_mac      = null
+.dst_mac      = null
+.machine_id   = null
+.src_ip       = null
+.dst_ip       = null
+.src_port     = null
+.dst_port     = null
+.protocol     = null
+.from_user    = null
+.from_machine = null
+.to_user      = null
+.to_machine   = null
+.resource     = null
+
+# ── try JSON first ───────────────────────────────────────────
+parsed_json, err = parse_json(line)
+if err == null {
+    .timestamp    = parsed_json.timestamp ?? parsed_json.time ?? parsed_json."@timestamp" ?? parsed_json.eventTime ?? null
+    .log_level    = parsed_json.level ?? parsed_json.severity ?? parsed_json.loglevel ?? null
+    .event_type   = parsed_json.eventType ?? parsed_json.event_type ?? null
+    .action       = parsed_json.action ?? parsed_json.eventName ?? parsed_json.operation ?? null
+    .who_user     = parsed_json.user ?? parsed_json.username ?? parsed_json.userId ?? parsed_json.actor ?? null
+    .who_userid   = parsed_json.userId ?? parsed_json.uid ?? null
+    .who_process  = parsed_json.process ?? parsed_json.program ?? null
+    .src_ip       = parsed_json.sourceIPAddress ?? parsed_json.src_ip ?? parsed_json.client_ip ?? parsed_json.remote_addr ?? null
+    .dst_ip       = parsed_json.dst_ip ?? parsed_json.dest_ip ?? parsed_json.destination_ip ?? null
+    .src_port     = parsed_json.src_port ?? parsed_json.sourcePort ?? null
+    .dst_port     = parsed_json.dst_port ?? parsed_json.destinationPort ?? parsed_json.port ?? null
+    .src_machine  = parsed_json.host ?? parsed_json.hostname ?? parsed_json.node ?? null
+    .dst_machine  = parsed_json.server ?? parsed_json.target_host ?? null
+    .protocol     = parsed_json.protocol ?? parsed_json.proto ?? null
+    .resource     = parsed_json.resource ?? parsed_json.path ?? parsed_json.url ?? null
+    .status       = parsed_json.status ?? parsed_json.result ?? null
+    .from_user    = parsed_json.user ?? null
+    .from_machine = parsed_json.host ?? null
+    .to_user      = parsed_json.target_user ?? parsed_json.runas_user ?? null
+    .to_machine   = parsed_json.server ?? parsed_json.target_host ?? null
+    .machine_id   = parsed_json.machine_id ?? parsed_json.asset_id ?? null
+    .event_type   = parsed_json.eventType ?? parsed_json.event_type ?? parsed_json.category ?? null
+    .who_userid   = to_string(parsed_json.userId ?? parsed_json.uid ?? "") ?? null
+}
+
+# ── regex extraction for non-JSON logs ───────────────────────
+
+# timestamps (ISO, syslog, Android, HDFS)
+ts, err = parse_regex(line, r'^(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)')
+if err == null { .timestamp = ts.ts }
+
+ts2, err = parse_regex(line, r'^(?P<ts>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d{2}:\d{2}:\d{2})')
+if err == null && .timestamp == null { .timestamp = ts2.ts }
+
+ts3, err = parse_regex(line, r'^(?P<ts>\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)')
+if err == null && .timestamp == null { .timestamp = ts3.ts }
+
+# severity
+sev, err = parse_regex(line, r'\b(?P<level>EMERG(?:ENCY)?|ALERT|CRIT(?:ICAL)?|ERR(?:OR)?|WARN(?:ING)?|NOTICE|INFO|DEBUG|TRACE|FATAL|SEVERE)\b')
+if err == null { .log_level = sev.level }
+
+# source IP with context
+src, err = parse_regex(line, r'(?i)(?:from|src|source|client)[= :]+(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})')
+if err == null { .src_ip = src.ip }
+
+# destination IP with context
+dst, err = parse_regex(line, r'(?i)(?:to|dst|dest|destination|server)[= :]+(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})')
+if err == null { .dst_ip = dst.ip }
+
+# generic IPs — first=source, second=dest
+ips = parse_regex_all!(line, r'(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})')
+if length(ips) > 0 && .src_ip == null { .src_ip = ips[0].ip }
+if length(ips) > 1 && .dst_ip == null { .dst_ip = ips[1].ip }
+
+# ports with direction
+sp, err = parse_regex(line, r'(?i)(?:src[_ -]?port|spt)[= :]+(?P<port>\d{1,5})')
+if err == null { .src_port = sp.port }
+dp, err = parse_regex(line, r'(?i)(?:dst[_ -]?port|dpt|port)[= :]+(?P<port>\d{1,5})')
+if err == null { .dst_port = dp.port }
+
+# MAC addresses
+smac, err = parse_regex(line, r'(?i)(?:src[_ -]?mac)[= :]+(?P<mac>[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5})')
+if err == null { .src_mac = smac.mac }
+dmac, err = parse_regex(line, r'(?i)(?:dst[_ -]?mac)[= :]+(?P<mac>[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5})')
+if err == null { .dst_mac = dmac.mac }
+
+# users
+usr, err = parse_regex(line, r'(?i)for (?:(?:invalid )?user )?(?P<user>[a-zA-Z0-9._@-]+)\s+from')
+if err == null { .who_user = usr.user; .to_user = usr.user }
+usr2, err = parse_regex(line, r'(?i)(?:user|username|usr|login|account)[= :]+["\x27]?(?P<user>[a-zA-Z0-9._@-]+)')
+if err == null && .who_user == null { .who_user = usr2.user; .from_user = usr2.user }
+
+# protocol
+proto, err = parse_regex(line, r'(?i)\b(?P<proto>TCP|UDP|ICMP|SSH|HTTPS?|FTP|SMTP|DNS|TLS|SSL|RDP|SMB|LDAP)\b')
+if err == null { .protocol = proto.proto }
+
+# process
+proc, err = parse_regex(line, r'(?P<proc>[a-zA-Z0-9._-]+)\[(?P<pid>\d+)\]')
+if err == null { .who_process = proc.proc }
+
+# hostname (syslog style: after timestamp before process)
+hst, err = parse_regex(line, r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d{2}:\d{2}:\d{2} (?P<host>[a-zA-Z0-9._-]+)')
+if err == null { .src_machine = hst.host; .from_machine = hst.host }
+
+# action keywords
+act, err = parse_regex(line, r'(?i)\b(?P<act>(?:log(?:ged)?[ -]?(?:in|out))|login|logout|accepted|rejected|denied|blocked|dropped|allowed|failed|succeeded|created|deleted|started|stopped|executed|connected|disconnected)\b')
+if err == null { .action = act.act }
+
+# status inference
+if match(line, r'(?i)(?:failed|failure|denied|rejected|error|invalid)') { .status = "failure" }
+if match(line, r'(?i)(?:accepted|succeeded|success|granted|allowed|permitted)') { .status = "success" }
+
+# event type inference
+if match(line, r'(?i)(?:auth|login|logon|password|credential|sshd|pam)') { .event_type = "authentication" }
+if match(line, r'(?i)(?:firewall|iptables|drop|block|acl)') && .event_type == null { .event_type = "firewall" }
+if match(line, r'(?i)(?:GET |POST |PUT |HTTP|nginx|apache)') && .event_type == null { .event_type = "web" }
+if match(line, r'(?i)(?:dns|resolve|nxdomain)') && .event_type == null { .event_type = "dns" }
+if match(line, r'(?i)(?:connect|disconnect|tcp|udp|socket)') && .event_type == null { .event_type = "network" }
+
+# HTTP-specific
+http, err = parse_regex(line, r'"(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD) (?P<path>\S+) HTTP')
+if err == null {
+    .action = http.method
+    .resource = http.path
+    .event_type = "web"
+}
+hstatus, err = parse_regex(line, r'HTTP/[12]\.[01]" (?P<status>\d{3})')
+if err == null { .status = hstatus.status }
+
+# resource (file paths)
+res, err = parse_regex(line, r'(?P<path>(?:/[a-zA-Z0-9._-]+){2,})')
+if err == null && .resource == null { .resource = res.path }
+
+# clean up: remove message field, keep only schema
+del(.message)
+del(.source_type)
+"""
+
+[sinks.output]
+type = "stdout"
+inputs = ["parse"]
+encoding.codec = "json"
